@@ -1,0 +1,9 @@
+{
+  "budget": 600000,
+  "inhouse_hours": 2000,
+  "mssp": {"annual_fee": 90000, "hours_capacity": 4000},
+  "platforms": {"xdr_suite": {"name": "XDR suite platform fee", "annual_fee": 40000}},
+  "mandatory": ["MFA_PR"],
+  "min_per_function": 1,
+  "max_protect_ratio": 2
+}

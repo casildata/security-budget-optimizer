@@ -1,0 +1,6 @@
+scenario_id,scenario,ale
+RANSOM,Ransomware,337719
+BEC,Business email compromise,239333
+BREACH,Customer data breach,380614
+DDOS,DDoS outage,132075
+INSIDER,Insider misuse,114455

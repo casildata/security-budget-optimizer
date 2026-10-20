@@ -1,0 +1,19 @@
+control_id,name,csf_function,annual_cost,analyst_hours,platform,exclusive_group,requires
+EDR_A,Endpoint detection & response (standalone),Detect,150000,300,,edr,
+EDR_B,Endpoint detection & response (XDR suite module),Detect,110000,350,xdr_suite,edr,
+IMM_BACKUP,Immutable backups,Recover,70000,150,,,
+MFA_PR,Phishing-resistant MFA,Protect,45000,120,,,
+PAY_CALLBACK,Payment call-back procedure,Protect,15000,200,,,
+EMAIL_SEC,Advanced email security (XDR suite module),Protect,55000,100,xdr_suite,,
+DLP,Data loss prevention,Protect,90000,400,,,
+DB_ENC,Database encryption,Protect,40000,120,,,
+SIEM,Security information & event management,Detect,120000,800,,,
+SOAR,Security orchestration & automation,Respond,60000,-300,,,SIEM
+DDOS_SCRUB,DDoS scrubbing service,Protect,50000,40,,,
+PAM,Privileged access management,Protect,85000,250,,,
+UEBA,User & entity behavior analytics,Detect,70000,300,,,SIEM
+IR_RETAINER,Incident response retainer,Respond,35000,20,,,
+VULN_MGMT,Vulnerability management program,Identify,50000,350,,,
+ASSET_INV,Asset inventory (CMDB),Identify,30000,150,,,
+TABLETOP,Incident response tabletop exercises,Respond,10000,80,,,
+DR_TEST,Disaster recovery testing,Recover,25000,120,,,
