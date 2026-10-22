@@ -1,5 +1,14 @@
 # Changelog: from the 2022 original to this release
 
+## 2026-10-22: robustness, baseline and CI
+
+- Control costs and effects now match the cyber-risk-monte-carlo bundles (EDR + backups $150k and 75% of ransomware loss, MFA + call-back $60k and 73% of BEC, DLP + encryption $120k and 55% of breach loss); every result was regenerated. At $600k the optimizer now spends $550k, because analyst hours bind first.
+- Scenario ALEs are read from the cyber-risk-monte-carlo v1.0 release asset (SHA-256 checked), with `scenarios.csv` as the offline fallback.
+- Effect uncertainty: triangular ranges in `control_effects.csv`, a 200-draw re-optimization sweep with selection frequency and regret, and a new figure.
+- Greedy "bang for the buck" baseline, compared with the optimizer at eight budgets.
+- Exhaustive-search checks for `max_net_benefit` and `min_cost` (tests and `run_all.py`), 19 tests in all.
+- CI: tests, pipeline and a `docs/results.md` drift check on pinned versions (`requirements-lock.txt`), tests on Python 3.10, gitleaks.
+
 ## 2026-10-22: review fixes
 
 - PuLP/CBC cross-check now runs (PuLP 2.7–3.x) and matches HiGHS; PuLP 4 changed its API, so it is detected and skipped with a message instead of crashing `run_all.py`.

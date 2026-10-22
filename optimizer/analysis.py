@@ -1,6 +1,8 @@
-"""Turn a solution into business terms, and verify it by exhaustive enumeration."""
+"""Turn a solution into business terms, verify it by exhaustive enumeration, and stress it."""
 
 from __future__ import annotations
+
+from dataclasses import replace
 
 import numpy as np
 import pandas as pd
@@ -59,55 +61,142 @@ def optimal_portfolio(inst: Instance, budget: float, **kwargs) -> Solution:
     return cheapest if cheapest.optimal else best
 
 
-def brute_force_max_reduction(inst: Instance, budget: float) -> tuple[float, list]:
+def _assess(inst: Instance, masks: np.ndarray) -> dict:
     """
-    Enumerate every subset of controls (2^n), apply all policy rules directly (not via the
-    MILP matrices), compute the exact multiplicative residual, and return the best
-    achievable risk reduction. An independent check of the model encoding. Platform and MSSP choices are derived: pay a platform fee only if
-    one of its controls is chosen; hire the MSSP only if in-house hours are exceeded.
+    Apply the policy rules directly (not via the MILP matrices) to each subset of controls,
+    one boolean row per subset. Platform and MSSP choices are derived: pay a platform fee
+    only if one of its controls is chosen; hire the MSSP only if in-house hours are exceeded.
+    `local` covers conflicts, prerequisites and hours; `policy` holds each mandate, coverage
+    and ratio rule separately so a baseline can report which ones it breaks.
     """
     ctl, pol = inst.controls, inst.policy
-    n = len(ctl)
-    masks = ((np.arange(2 ** n)[:, None] >> np.arange(n)) & 1).astype(bool)
-    ok = np.ones(len(masks), dtype=bool)
     col = {c: i for i, c in enumerate(ctl.index)}
-
+    local = np.ones(len(masks), dtype=bool)
     for g, members in ctl[ctl["exclusive_group"] != ""].groupby("exclusive_group").groups.items():
-        ok &= masks[:, [col[c] for c in members]].sum(axis=1) <= 1
+        local &= masks[:, [col[c] for c in members]].sum(axis=1) <= 1
     for c, req in ctl["requires"].items():
         if req:
-            ok &= ~masks[:, col[c]] | masks[:, col[req]]
+            local &= ~masks[:, col[c]] | masks[:, col[req]]
+
+    policy = {}
     for c in pol.get("mandatory", []):
-        ok &= masks[:, col[c]]
+        policy[f"mandatory {c}"] = masks[:, col[c]]
     k = pol.get("min_per_function", 0)
     fn = ctl["csf_function"].to_numpy()
     for f in CSF_FUNCTIONS:
-        ok &= masks[:, fn == f].sum(axis=1) >= k
+        policy[f"{f} coverage"] = masks[:, fn == f].sum(axis=1) >= k
     ratio = pol.get("max_protect_ratio")
     if ratio:
         protect = masks[:, fn == "Protect"].sum(axis=1)
         other = masks[:, np.isin(fn, ["Detect", "Respond", "Recover"])].sum(axis=1)
-        ok &= protect <= ratio * other
+        policy["Protect ratio"] = protect <= ratio * other
 
     hours = masks @ ctl["analyst_hours"].to_numpy(dtype=float)
     need_mssp = hours > pol["inhouse_hours"]
     if pol.get("mssp"):
-        ok &= hours <= np.where(need_mssp, pol["mssp"]["hours_capacity"], pol["inhouse_hours"])
+        local &= hours <= np.where(need_mssp, pol["mssp"]["hours_capacity"], pol["inhouse_hours"])
     else:
-        ok &= ~need_mssp
+        local &= ~need_mssp
     cost = masks @ ctl["annual_cost"].to_numpy(dtype=float)
     for p, spec in pol.get("platforms", {}).items():
         cost += masks[:, (ctl["platform"] == p).to_numpy()].any(axis=1) * spec["annual_fee"]
     if pol.get("mssp"):
         cost += need_mssp * pol["mssp"]["annual_fee"]
-    ok &= cost <= budget + 1e-6
+    return {"cost": cost, "local": local, "policy": policy}
 
+
+def _reduction(inst: Instance, masks: np.ndarray) -> np.ndarray:
+    """Exact multiplicative risk reduction of each subset."""
     ale = inst.scenarios["ale"].to_numpy(dtype=float)
     log_keep = np.log1p(-inst.effects.to_numpy())          # log(1 - e), controls x scenarios
-    residual = np.exp(masks[ok] @ log_keep) * ale
-    reduction = (ale - residual).sum(axis=1)
-    if reduction.size == 0:
+    return (ale - np.exp(masks @ log_keep) * ale).sum(axis=1)
+
+
+def feasible_subsets(inst: Instance) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Every subset (2^n) that meets all policy rules, budget aside: masks, reduction, cost."""
+    n = len(inst.controls)
+    masks = ((np.arange(2 ** n)[:, None] >> np.arange(n)) & 1).astype(bool)
+    a = _assess(inst, masks)
+    ok = a["local"] & np.logical_and.reduce(list(a["policy"].values()))
+    return masks[ok], _reduction(inst, masks[ok]), a["cost"][ok]
+
+
+def brute_force_max_reduction(inst: Instance, budget: float) -> tuple[float, list]:
+    """
+    Enumerate every subset of controls, keep those that meet the rules and the budget, and
+    return the best risk reduction from the exact product. An independent check of the
+    model encoding.
+    """
+    masks, reduction, cost = feasible_subsets(inst)
+    within = cost <= budget + 1e-6
+    if not within.any():
         return float("nan"), []
-    best = int(np.argmax(reduction))
-    chosen = list(ctl.index[masks[ok][best]])
-    return float(reduction[best]), chosen
+    best = int(np.argmax(np.where(within, reduction, -np.inf)))
+    return float(reduction[best]), list(inst.controls.index[masks[best]])
+
+
+def greedy_portfolio(inst: Instance, budget: float) -> dict:
+    """
+    The "bang for the buck" baseline: start from the mandated controls and keep adding the
+    control with the most risk reduction per extra dollar (fees included) that still fits the
+    budget, conflicts, prerequisites and hours. Coverage and the Protect ratio aren't
+    enforced; `broken` lists the rules the result violates.
+    """
+    ctl = inst.controls
+    chosen = np.isin(ctl.index, inst.policy.get("mandatory", []))
+    spend = float(_assess(inst, chosen[None, :])["cost"][0])
+    gain = float(_reduction(inst, chosen[None, :])[0])
+    while True:
+        new = np.flatnonzero(~chosen)
+        cand = np.repeat(chosen[None, :], len(new), axis=0)
+        cand[np.arange(len(new)), new] = True
+        a = _assess(inst, cand)
+        extra = _reduction(inst, cand) - gain
+        ok = a["local"] & (a["cost"] <= budget + 1e-6) & (extra > 1e-9)
+        if not ok.any():
+            break
+        ratio = np.where(ok, extra / np.maximum(a["cost"] - spend, 1e-9), -np.inf)
+        pick = int(np.argmax(ratio))
+        chosen = cand[pick]
+        spend, gain = float(a["cost"][pick]), gain + float(extra[pick])
+    final = _assess(inst, chosen[None, :])["policy"]
+    return {"controls": list(ctl.index[chosen]), "spend": spend, "reduction": gain,
+            "broken": [rule for rule, ok in final.items() if not ok[0]]}
+
+
+def _triangular(rng: np.random.Generator, lo: np.ndarray, mode: np.ndarray,
+                hi: np.ndarray) -> np.ndarray:
+    """Inverse-CDF triangular draws; a zero-width range returns its mode."""
+    u = rng.random(mode.shape)
+    width = hi - lo
+    c = np.divide(mode - lo, width, out=np.zeros_like(width), where=width > 0)
+    left = lo + np.sqrt(u * width * (mode - lo))
+    right = hi - np.sqrt((1 - u) * width * (hi - mode))
+    return np.where(width > 0, np.where(u < c, left, right), mode)
+
+
+def effect_uncertainty(inst: Instance, budget: float, draws: int = 200,
+                       seed: int = 2026) -> dict:
+    """
+    Re-optimize with every effect drawn from its triangular range (reduction_min,
+    reduction, reduction_max). Returns how often each control is chosen and the regret of
+    the nominal portfolio: the risk reduction it gives up against that draw's best portfolio.
+    """
+    if inst.effect_min is None:
+        raise ValueError("control_effects.csv has no reduction_min/reduction_max columns")
+    rng = np.random.default_rng(seed)
+    nominal = selected_controls(inst, optimal_portfolio(inst, budget))
+    lo, mode, hi = (t.to_numpy() for t in (inst.effect_min, inst.effects, inst.effect_max))
+    counts = pd.Series(0, index=inst.controls.index)
+    regret, same = [], 0
+    for _ in range(draws):
+        effects = pd.DataFrame(_triangular(rng, lo, mode, hi), index=inst.effects.index,
+                               columns=inst.effects.columns)
+        alt = replace(inst, effects=effects)
+        best = summarize(alt, optimal_portfolio(alt, budget))
+        counts[best["controls"]] += 1
+        kept = alt.total_ale - residual_ale(alt, nominal).sum()
+        regret.append(max(0.0, best["reduction"] - kept))   # clip solver tolerance
+        same += set(best["controls"]) == set(nominal)
+    return {"nominal": nominal, "frequency": counts / draws, "regret": np.array(regret),
+            "share_nominal_optimal": same / draws, "draws": draws}
