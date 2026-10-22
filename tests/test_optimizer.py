@@ -4,7 +4,6 @@ The key test compares the MILP against exhaustive enumeration of every control s
 at many budgets: the enumeration applies the policy rules directly, so it checks the
 model encoding (McCormick chain, big-M either/or, fixed charges) independently.
 """
-import importlib.util
 import sys
 from pathlib import Path
 
@@ -12,8 +11,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from optimizer import (brute_force_max_reduction, build_model, load_instance,  # noqa: E402
-                       lp_relaxation, optimal_portfolio, residual_ale, solve_pulp, solve_scipy,
-                       summarize)
+                       lp_relaxation, optimal_portfolio, pulp_unavailable, residual_ale,
+                       solve_pulp, solve_scipy, summarize)
 from optimizer.data import CSF_FUNCTIONS  # noqa: E402
 
 INST = load_instance()
@@ -118,8 +117,9 @@ def test_invalid_input_is_rejected():
 
 
 def test_pulp_backend_matches_scipy():
-    if importlib.util.find_spec("pulp") is None:
-        skip("PuLP not installed")
+    reason = pulp_unavailable()
+    if reason:
+        skip(reason)
     model = build_model(INST, budget=BUDGET)
     assert abs(solve_pulp(model).objective - solve_scipy(model).objective) < 1.0
 

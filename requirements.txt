@@ -3,5 +3,5 @@ pandas>=2.0
 scipy>=1.9        # scipy.optimize.milp (HiGHS)
 matplotlib>=3.7
 # Optional:
-# pulp>=2.7       # second solver backend (CBC); cross-checked in tests when installed
+# pulp>=2.7,<4    # second solver backend (CBC); cross-checked when installed. PuLP 4 changed its API
 # pytest>=8.0     # tests also run with `python tests/test_optimizer.py`

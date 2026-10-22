@@ -1,12 +1,10 @@
 """Check that the packages in requirements.txt are installed and new enough.
 
-Missing or outdated packages are installed with pip. From a terminal it asks
-first; when no one can answer (e.g. CI) it installs them automatically.
-Only plain `name>=version` lines and `sys_platform` markers are understood,
+Nothing is installed automatically: if a package is missing or too old, the
+script stops and prints the pip command to run. Only plain `name>=version` lines and `sys_platform` markers are understood,
 which is all the requirements files in this repository use.
 """
 import re
-import subprocess
 import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -41,14 +39,6 @@ def check_requirements(path):
     if not problems:
         return
 
-    cmd = [sys.executable, "-m", "pip", "install", "-r", str(path)]
-    print("Missing or outdated packages:\n  " + "\n  ".join(problems))
-    if sys.stdin.isatty():
-        try:
-            answer = input("Install them now with pip? [Y/n] ").strip().lower()
-        except EOFError:  # a "terminal" with no input behind it: treat as unattended
-            answer = ""
-            print()
-        if answer.startswith("n"):
-            sys.exit("Not installed. To install later, run:\n  " + " ".join(cmd))
-    subprocess.check_call(cmd)
+    cmd = f'"{sys.executable}" -m pip install -r "{path}"'
+    sys.exit("Missing or outdated packages:\n  " + "\n  ".join(problems)
+             + "\nInstall them with:\n  " + cmd)

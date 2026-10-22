@@ -25,10 +25,11 @@ class Instance:
 
 
 def load_instance(data_dir: Path = DATA_DIR, **policy_overrides) -> Instance:
-    controls = pd.read_csv(data_dir / "controls.csv", dtype={"platform": str,
-                           "exclusive_group": str, "requires": str}).set_index("control_id")
-    controls[["platform", "exclusive_group", "requires"]] = (
-        controls[["platform", "exclusive_group", "requires"]].fillna(""))
+    text = ["platform", "exclusive_group", "requires", "cis_safeguard"]
+    controls = pd.read_csv(data_dir / "controls.csv",
+                           dtype=dict.fromkeys(text, str)).set_index("control_id")
+    for col in text:  # cis_safeguard is optional in a user's own catalogue
+        controls[col] = controls[col].fillna("") if col in controls else ""
     scenarios = pd.read_csv(data_dir / "scenarios.csv").set_index("scenario_id")
     raw_effects = pd.read_csv(data_dir / "control_effects.csv")
     policy = json.loads((data_dir / "policy.json").read_text())

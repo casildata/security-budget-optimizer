@@ -39,8 +39,23 @@ def solve_scipy(model: LinearModel, time_limit: float = 60.0) -> Solution:
     return Solution("Optimal", objective, values)
 
 
+def pulp_unavailable() -> str | None:
+    """Why the PuLP/CBC backend can't run here, or None if a supported PuLP is installed."""
+    try:
+        import pulp
+    except ImportError:
+        return "PuLP not installed"
+    major = int(pulp.__version__.split(".")[0])
+    if major >= 4:  # 4.0 replaced the LpVariable(name, lowBound=...) API used below
+        return f'PuLP {pulp.__version__} not supported; install "pulp>=2.7,<4"'
+    return None
+
+
 def solve_pulp(model: LinearModel) -> Solution:
-    """Same model through PuLP's default CBC solver (optional dependency)."""
+    """Same model through PuLP's default CBC solver (optional dependency, PuLP 2.7-3.x)."""
+    reason = pulp_unavailable()
+    if reason:
+        raise ImportError(reason)
     import pulp
 
     prob = pulp.LpProblem("security_budget",

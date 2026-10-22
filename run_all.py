@@ -1,19 +1,18 @@
 """Reproduce every table and figure in docs/results.md.
 
-    python run_all.py              # SciPy/HiGHS (PuLP cross-check runs if PuLP is installed)
+    python run_all.py              # SciPy/HiGHS (PuLP cross-check runs if PuLP 2.7-3.x is installed)
     python run_all.py --budget 750000
 """
 
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import time
 from pathlib import Path
 
 from check_requirements import check_requirements
 
-# Before the third-party imports below, so missing packages can be installed first.
+# Before the third-party imports below, so a missing package gives a clear message.
 check_requirements(Path(__file__).resolve().parent / "requirements.txt")
 
 import matplotlib  # noqa: E402
@@ -24,7 +23,8 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from optimizer import (brute_force_max_reduction, build_model, load_instance,  # noqa: E402
-                       lp_relaxation, optimal_portfolio, solve_pulp, solve_scipy, summarize)
+                       lp_relaxation, optimal_portfolio, pulp_unavailable, solve_pulp,
+                       solve_scipy, summarize)
 from optimizer.data import CSF_FUNCTIONS  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
@@ -56,8 +56,8 @@ def main(budget: float | None = None) -> dict:
     scen = inst.scenarios.assign(ale=inst.scenarios["ale"].map(usd)).reset_index()
     out.append("## 1. Inputs\n\n**Risk scenarios** (total ALE " + usd(inst.total_ale) + "):\n\n"
                + md_table(scen.rename(columns={"scenario_id": "id", "ale": "ALE"})))
-    cat = ctl.reset_index()[["control_id", "name", "csf_function", "annual_cost", "analyst_hours",
-                             "platform", "exclusive_group", "requires"]].copy()
+    cat = ctl.reset_index()[["control_id", "name", "csf_function", "cis_safeguard", "annual_cost",
+                             "analyst_hours", "platform", "exclusive_group", "requires"]].copy()
     cat["annual_cost"] = cat["annual_cost"].map(usd)
     out.append("\n**Control catalogue:**\n\n" + md_table(cat))
 
@@ -72,12 +72,13 @@ def main(budget: float | None = None) -> dict:
     bf_s = time.perf_counter() - t0
     assert abs(bf_value - rec["reduction"]) < 1.0, "MILP and exhaustive search disagree"
 
-    if importlib.util.find_spec("pulp"):
+    skip_reason = pulp_unavailable()
+    if skip_reason is None:
         pulp_sol = solve_pulp(model)
         pulp_note = (f"PuLP/CBC on the same model: {usd(pulp_sol.objective)} "
                      f"({'matches' if abs(pulp_sol.objective - rec['reduction']) < 1 else 'DIFFERS'}).")
     else:
-        pulp_note = "PuLP cross-check skipped (PuLP not installed)."
+        pulp_note = f"PuLP cross-check skipped ({skip_reason})."
 
     chosen = ctl.loc[rec["controls"], ["name", "csf_function", "annual_cost", "analyst_hours"]]
     chosen = chosen.reset_index().assign(annual_cost=lambda d: d["annual_cost"].map(usd))
@@ -101,8 +102,7 @@ def main(budget: float | None = None) -> dict:
                f"({'MSSP' if rec['mssp'] else 'in-house team'})\n\n"
                + md_table(by_s.reset_index(drop=True)) + "\n\n"
                f"**Verification.** Exhaustive enumeration of all {2 ** len(ctl):,} control subsets "
-               f"({bf_s:.1f} s) gives the same optimum, {usd(bf_value)}. MILP solve time "
-               f"{solve_ms:.0f} ms. {pulp_note}\n")
+               f"gives the same optimum, {usd(bf_value)}. {pulp_note}\n")
 
     # ---- 3. Budget sweep ---------------------------------------------------------------
     min_spend = solve_scipy(build_model(inst, "min_cost", target_share=0.0))
@@ -261,6 +261,8 @@ def main(budget: float | None = None) -> dict:
                f"(gap {(lp.objective - rec['reduction']) / rec['reduction']:.1%}).\n")
 
     (ROOT / "docs" / "results.md").write_text("\n".join(out), encoding="utf-8")
+    # Timings go to the console only, so docs/results.md is identical on every run
+    print(f"MILP solve {solve_ms:.0f} ms, exhaustive search {bf_s:.1f} s")
     print(f"Recommended at {usd(budget)}: {rec['controls']}")
     print(f"  spend {usd(rec['spend'])}, reduction {usd(rec['reduction'])}, ROSI {rec['rosi']:+.0%}")
     print("Results written to docs/results.md")
